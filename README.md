@@ -16,6 +16,20 @@ Built by Team 27 at the YC × ElevenLabs Hackathon, University of Waterloo, Nov 
 
 **Demo data.** 6 seeded dishes, low eggs, one expensive barely-used ingredient, a supplier registry with custom suppliers and rates, and seeded 20 km prices.
 
+## The ledger books: what the agent reads, what it updates, and how Alter secures it
+
+The ledger is the restaurant's book of record — inventory on hand, every order, every price. The Kitchen Manager is the only agent allowed to touch it, and it does so through its own identity.
+
+**What it reads.** Before it answers anything, the agent reads the ledger: current stock of every ingredient, today's orders, supplier prices. That is how it knows the salmon only has 3 portions left, or that eggs are low.
+
+**What it updates.** Every sale updates the books live:
+- Tapping a dish on the POS deducts that recipe's ingredients from inventory and logs a receipt.
+- When a dish sells out, the agent 86s it — the menu board updates and the dish can no longer be ordered.
+- By voice, the agent can update a price, add a dish, or add a supplier to the registry.
+- At End Sales it writes the close-of-day tally and the next grocery list back to the ledger as orders.
+
+**How Alter secures it.** The agent's identity lives in Alter, application "Kitchen Manager", holding exactly two scopes: `ledger:read` and `orders:write`. Nothing else — no money movement, no access to anything outside the ledger. Each ledger call carries a short-lived 5-minute token with only those scopes. No token gets a `401`, the wrong scope gets a `403`, and every access — allowed or denied — is written to `audit.log`. And the agent still never buys: it proposes the order, a human presses BUY.
+
 ## Architecture
 
 ```mermaid
