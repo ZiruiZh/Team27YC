@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import './App.css';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -15,8 +15,8 @@ type Ingredient = {
   unitCost: number;
   perishable: boolean;
   section: Section;
-  par: number; // target stock level the grocery list orders up to
-  kgPerUnit: number; // for waste (kg) — 1 portion salmon = 0.2 kg, 1 egg = 0.06 kg
+  par: number;
+  kgPerUnit: number;
 };
 
 type RecipeLine = { ing: string; qty: number };
@@ -61,6 +61,16 @@ type GroceryLine = {
   source: string;
 };
 
+type LedgerState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | {
+      status: 'live';
+      inventory: { item: string; onHand: number; unit: string }[];
+      orderCount: number;
+    }
+  | { status: 'offline' };
+
 /* ------------------------------------------------------------------ */
 /* Seed data — illustrative demo values, the team can replace them     */
 /* ------------------------------------------------------------------ */
@@ -87,69 +97,12 @@ const INGREDIENTS: Ingredient[] = [
 ];
 
 const DISHES: Dish[] = [
-  {
-    id: 'misoSalmon',
-    name: 'Miso Salmon',
-    price: 24,
-    recipe: [
-      { ing: 'salmon', qty: 1 },
-      { ing: 'rice', qty: 0.2 },
-      { ing: 'miso', qty: 0.05 },
-    ],
-  },
-  {
-    id: 'chickenCurry',
-    name: 'Chicken Curry',
-    price: 18,
-    recipe: [
-      { ing: 'chicken', qty: 0.25 },
-      { ing: 'rice', qty: 0.2 },
-      { ing: 'spices', qty: 0.03 },
-    ],
-  },
-  {
-    id: 'pizza',
-    name: 'Margherita Pizza',
-    price: 16,
-    recipe: [
-      { ing: 'dough', qty: 0.3 },
-      { ing: 'cheese', qty: 0.15 },
-      { ing: 'tomato', qty: 0.2 },
-    ],
-  },
-  {
-    id: 'burger',
-    name: 'Beef Burger',
-    price: 19,
-    recipe: [
-      { ing: 'beef', qty: 0.2 },
-      { ing: 'bun', qty: 1 },
-      { ing: 'cheese', qty: 0.05 },
-      { ing: 'lettuce', qty: 0.05 },
-    ],
-  },
-  {
-    id: 'caesar',
-    name: 'Caesar Salad',
-    price: 14,
-    recipe: [
-      { ing: 'lettuce', qty: 0.15 },
-      { ing: 'chicken', qty: 0.1 },
-      { ing: 'parmesan', qty: 0.05 },
-      { ing: 'croutons', qty: 0.05 },
-    ],
-  },
-  {
-    id: 'trufflePasta',
-    name: 'Truffle Pasta',
-    price: 22,
-    recipe: [
-      { ing: 'pasta', qty: 0.2 },
-      { ing: 'cream', qty: 0.1 },
-      { ing: 'truffleOil', qty: 0.02 },
-      { ing: 'parmesan', qty: 0.05 },
-    ],
-  },
+  { id: 'misoSalmon', name: 'Miso Salmon', price: 24, recipe: [{ ing: 'salmon', qty: 1 }, { ing: 'rice', qty: 0.2 }, { ing: 'miso', qty: 0.05 }] },
+  { id: 'chickenCurry', name: 'Chicken Curry', price: 18, recipe: [{ ing: 'chicken', qty: 0.25 }, { ing: 'rice', qty: 0.2 }, { ing: 'spices', qty: 0.03 }] },
+  { id: 'pizza', name: 'Margherita Pizza', price: 16, recipe: [{ ing: 'dough', qty: 0.3 }, { ing: 'cheese', qty: 0.15 }, { ing: 'tomato', qty: 0.2 }] },
+  { id: 'burger', name: 'Beef Burger', price: 19, recipe: [{ ing: 'beef', qty: 0.2 }, { ing: 'bun', qty: 1 }, { ing: 'cheese', qty: 0.05 }, { ing: 'lettuce', qty: 0.05 }] },
+  { id: 'caesar', name: 'Caesar Salad', price: 14, recipe: [{ ing: 'lettuce', qty: 0.15 }, { ing: 'chicken', qty: 0.1 }, { ing: 'parmesan', qty: 0.05 }, { ing: 'croutons', qty: 0.05 }] },
+  { id: 'trufflePasta', name: 'Truffle Pasta', price: 22, recipe: [{ ing: 'pasta', qty: 0.2 }, { ing: 'cream', qty: 0.1 }, { ing: 'truffleOil', qty: 0.02 }, { ing: 'parmesan', qty: 0.05 }] },
 ];
 
 /* Custom supplier registry — off-market deals the owner told the agent
@@ -190,6 +143,15 @@ const DISH_MAP: Record<string, Dish> = Object.fromEntries(
   DISHES.map((d) => [d.id, d]),
 );
 
+const SHORT_NAME: Record<string, string> = {
+  misoSalmon: 'Miso',
+  chickenCurry: 'Curry',
+  pizza: 'Pizza',
+  burger: 'Burger',
+  caesar: 'Caesar',
+  trufflePasta: 'Pasta',
+};
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -216,176 +178,6 @@ function recipeText(dish: Dish): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Styles (plain dark, matches the Vite template)                      */
-/* ------------------------------------------------------------------ */
-
-const s: Record<string, CSSProperties> = {
-  app: {
-    maxWidth: 1100,
-    margin: '0 auto',
-    padding: 20,
-    background: '#14161a',
-    color: '#e8eaed',
-    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-    minHeight: '100vh',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-    flexWrap: 'wrap',
-    marginBottom: 16,
-  },
-  title: { margin: 0, fontSize: 28 },
-  subtitle: { margin: '4px 0 0', color: '#9aa0a6' },
-  panel: {
-    background: '#1f222a',
-    border: '1px solid #333842',
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 16,
-  },
-  panelTitle: { margin: '0 0 12px', fontSize: 18 },
-  scoreRow: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 },
-  scoreCard: {
-    flex: '1 1 140px',
-    background: '#1f222a',
-    border: '1px solid #333842',
-    borderRadius: 10,
-    padding: 12,
-  },
-  scoreLabel: { fontSize: 12, color: '#9aa0a6', textTransform: 'uppercase' },
-  scoreValue: { fontSize: 24, fontWeight: 700, marginTop: 4 },
-  grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
-  posGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  posButton: {
-    background: '#2b6cb0',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    padding: '12px 10px',
-    cursor: 'pointer',
-    textAlign: 'left',
-  },
-  posButtonDisabled: {
-    background: '#3a3f4a',
-    color: '#9aa0a6',
-    border: 'none',
-    borderRadius: 8,
-    padding: '12px 10px',
-    cursor: 'not-allowed',
-    textAlign: 'left',
-  },
-  dishName: { fontWeight: 700, fontSize: 15 },
-  dishPrice: { fontWeight: 700, fontSize: 15 },
-  dishRecipe: { fontSize: 12, color: '#c5c9cf', marginTop: 4, lineHeight: 1.4 },
-  menuRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 10,
-    padding: '10px 0',
-    borderBottom: '1px solid #2c313a',
-  },
-  crossed: { textDecoration: 'line-through', color: '#8a8f98' },
-  smallButton: {
-    background: '#333842',
-    color: '#e8eaed',
-    border: '1px solid #4a505c',
-    borderRadius: 6,
-    padding: '6px 10px',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  smallButtonDanger: {
-    background: '#5a1f1f',
-    color: '#ffb4b4',
-    border: '1px solid #7a2e2e',
-    borderRadius: 6,
-    padding: '6px 10px',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  bigButton: {
-    width: '100%',
-    background: '#2f9e44',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 10,
-    padding: '14px 16px',
-    fontSize: 17,
-    fontWeight: 700,
-    cursor: 'pointer',
-    marginBottom: 16,
-  },
-  buyButton: {
-    background: '#2f9e44',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 10,
-    padding: '12px 24px',
-    fontSize: 16,
-    fontWeight: 700,
-    cursor: 'pointer',
-  },
-  ghostButton: {
-    background: 'transparent',
-    color: '#9aa0a6',
-    border: '1px solid #4a505c',
-    borderRadius: 8,
-    padding: '8px 12px',
-    cursor: 'pointer',
-  },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
-  th: { textAlign: 'left', color: '#9aa0a6', padding: '6px 8px', borderBottom: '1px solid #333842' },
-  td: { padding: '6px 8px', borderBottom: '1px solid #2c313a' },
-  tag: {
-    display: 'inline-block',
-    fontSize: 11,
-    padding: '2px 7px',
-    borderRadius: 20,
-    background: '#333842',
-    color: '#c5c9cf',
-  },
-  tagGreen: {
-    display: 'inline-block',
-    fontSize: 11,
-    padding: '2px 7px',
-    borderRadius: 20,
-    background: '#1d4d2b',
-    color: '#8be0a4',
-  },
-  tagRed: {
-    display: 'inline-block',
-    fontSize: 11,
-    padding: '2px 7px',
-    borderRadius: 20,
-    background: '#5a1f1f',
-    color: '#ffb4b4',
-  },
-  tagAmber: {
-    display: 'inline-block',
-    fontSize: 11,
-    padding: '2px 7px',
-    borderRadius: 20,
-    background: '#5a4312',
-    color: '#ffd28a',
-  },
-  confirmBox: {
-    background: '#1d4d2b',
-    border: '1px solid #2f9e44',
-    color: '#c8f0d2',
-    borderRadius: 10,
-    padding: 14,
-    marginTop: 12,
-    lineHeight: 1.5,
-  },
-  note: { fontSize: 13, color: '#9aa0a6', lineHeight: 1.5 },
-  sectionTitle: { margin: '16px 0 8px', fontSize: 16 },
-};
-
-/* ------------------------------------------------------------------ */
 /* App                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -394,6 +186,58 @@ export default function App() {
   const [manual86, setManual86] = useState<ReadonlySet<string>>(new Set());
   const [closed, setClosed] = useState(false);
   const [bought, setBought] = useState(false);
+  const [query, setQuery] = useState('');
+  const [now, setNow] = useState(() => new Date());
+  const [ledger, setLedger] = useState<LedgerState>({ status: 'idle' });
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  /* Alter ledger check: mint a 5-minute token, then read the ledger.
+     No key or token is hardcoded — the token lives in state only. */
+  const fetchLedger = async () => {
+    setLedger({ status: 'loading' });
+    try {
+      const login = await fetch('http://localhost:3002/auth/demo-login');
+      if (!login.ok) throw new Error('demo login failed');
+      const { access_token } = (await login.json()) as { access_token: string };
+      const res = await fetch('http://localhost:3002/ledger', {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      if (!res.ok) throw new Error('ledger read failed');
+      const data = (await res.json()) as {
+        inventory?: { item: string; onHand: number; unit: string }[];
+        orders?: unknown[];
+      };
+      setLedger({
+        status: 'live',
+        inventory: data.inventory ?? [],
+        orderCount: Array.isArray(data.orders) ? data.orders.length : 0,
+      });
+    } catch {
+      setLedger({ status: 'offline' });
+    }
+  };
+
+  useEffect(() => {
+    fetchLedger();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const talkToManager = () => {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    const el = document.querySelector('elevenlabs-convai') as HTMLElement | null;
+    if (el) {
+      el.style.transition = 'box-shadow 0.3s ease';
+      el.style.boxShadow = '0 0 0 4px #dc2626, 0 0 28px rgba(220,38,38,0.65)';
+      el.style.borderRadius = '18px';
+      window.setTimeout(() => {
+        el.style.boxShadow = '';
+      }, 3000);
+    }
+  };
 
   /* Ingredients used today, derived from the receipt log. */
   const used = useMemo(() => {
@@ -470,6 +314,7 @@ export default function App() {
     setManual86(new Set());
     setClosed(false);
     setBought(false);
+    setQuery('');
   };
 
   const mostUsed = useMemo(() => {
@@ -547,345 +392,520 @@ export default function App() {
   const usedIngredients = INGREDIENTS.filter((ing) => (used[ing.id] ?? 0) > 0);
   const recentReceipts = [...orders].reverse().slice(0, 12);
 
+  /* Low / out-of-stock ingredients, live. */
+  const lowStock = INGREDIENTS.filter((ing) => {
+    const qty = current[ing.id] ?? 0;
+    return qty <= 0 || qty <= ing.startQty * 0.25;
+  });
+
+  /* Search filters the dishes on the POS and the menu board. */
+  const visibleDishes = DISHES.filter((d) =>
+    d.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+
+  /* Chart: orders per dish today (bars) + cumulative revenue (red line).
+     Both come from the live receipt log. */
+  const chart = useMemo(() => {
+    const counts = DISHES.map(
+      (d) => orders.filter((o) => o.dishId === d.id).length,
+    );
+    const revPerDish = DISHES.map((d) =>
+      orders
+        .filter((o) => o.dishId === d.id)
+        .reduce((s, o) => s + o.price, 0),
+    );
+    const maxCount = Math.max(1, ...counts);
+    const W = 560;
+    const base = 180;
+    const top = 24;
+    const slot = W / DISHES.length;
+    const barW = 44;
+    const bars = DISHES.map((d, i) => {
+      const h = (counts[i] / maxCount) * (base - top);
+      const x = i * slot + (slot - barW) / 2;
+      return { x, y: base - h, w: barW, h, count: counts[i], name: SHORT_NAME[d.id] };
+    });
+    let cum = 0;
+    const line = revPerDish.map((_r, i) => {
+      cum += revPerDish[i];
+      const cx = i * slot + slot / 2;
+      const cy = base - (cum / Math.max(1, revenue)) * (base - top);
+      return `${cx},${cy}`;
+    }).join(' ');
+    return { bars, line, base, maxCount };
+  }, [orders, revenue]);
+
+  const clock = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateLine = now.toLocaleDateString([], {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+
   return (
-    <div style={s.app}>
-      <div style={s.header}>
-        <div>
-          <h1 style={s.title}>Overnight Kitchen Manager</h1>
-          <p style={s.subtitle}>
-            Demo restaurant — POS, live cost &amp; waste, and tomorrow&apos;s
-            grocery list. The agent never buys anything on its own: a human
-            presses BUY.
-          </p>
-        </div>
-        <button style={s.ghostButton} onClick={resetDemo}>
-          Reset demo
-        </button>
-      </div>
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="side-logo">K</div>
+        <nav className="side-nav">
+          <span className="side-ic active" title="Dashboard">⌂</span>
+          <span className="side-ic" title="POS">▦</span>
+          <span className="side-ic" title="Inventory">◷</span>
+          <span className="side-ic" title="Settings">⚙</span>
+        </nav>
+        <div className="side-avatar">C</div>
+      </aside>
 
-      {/* Scoreboard */}
-      <div style={s.scoreRow}>
-        <div style={s.scoreCard}>
-          <div style={s.scoreLabel}>Revenue</div>
-          <div style={s.scoreValue}>{money(revenue)}</div>
-        </div>
-        <div style={s.scoreCard}>
-          <div style={s.scoreLabel}>Orders</div>
-          <div style={s.scoreValue}>{orders.length}</div>
-        </div>
-        <div style={s.scoreCard}>
-          <div style={s.scoreLabel}>Food cost %</div>
-          <div style={s.scoreValue}>
-            {revenue > 0 ? `${foodCostPct.toFixed(1)}%` : '—'}
+      <main className="main">
+        <header className="topbar">
+          <div>
+            <h1 className="hello">Hi, Chef</h1>
+            <p className="hello-sub">{closed ? 'Service closed — overnight list is ready.' : 'Service is live. Tap a dish to sell it.'}</p>
           </div>
-        </div>
-        <div style={s.scoreCard}>
-          <div style={s.scoreLabel}>Waste</div>
-          <div style={s.scoreValue}>{wasteKg.toFixed(1)} kg</div>
-          {!closed && <div style={s.note}>counted at close</div>}
-        </div>
-        <div style={s.scoreCard}>
-          <div style={s.scoreLabel}>Daily profit</div>
-          <div style={s.scoreValue}>{money(profit)}</div>
-        </div>
-      </div>
+          <div className="top-actions">
+            <input
+              className="search"
+              type="search"
+              placeholder="Search dishes"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button className="talk-btn" onClick={talkToManager}>
+              Talk to the Manager
+            </button>
+            <button className="ghost-btn" onClick={resetDemo}>
+              Reset demo
+            </button>
+            <div className="clock">
+              <span className="clock-time">{clock}</span>
+              <span className="clock-date">{dateLine}</span>
+            </div>
+          </div>
+        </header>
 
-      <div style={s.grid2}>
-        {/* POS */}
-        <div style={s.panel}>
-          <h2 style={s.panelTitle}>POS — tap a dish to sell it</h2>
-          <div style={s.posGrid}>
-            {DISHES.map((dish) => {
-              const out = is86(dish);
-              return (
-                <button
-                  key={dish.id}
-                  style={out ? s.posButtonDisabled : s.posButton}
-                  disabled={out || closed}
-                  onClick={() => placeOrder(dish)}
-                >
-                  <span style={s.dishName}>{dish.name}</span>{' '}
-                  <span style={s.dishPrice}>{money(dish.price)}</span>
-                  <div style={s.dishRecipe}>
-                    {out ? '86’d — unavailable' : recipeText(dish)}
-                  </div>
+        <section className="stats">
+          <div className="stat">
+            <div className="stat-num">{revenue > 0 ? `${foodCostPct.toFixed(1)}%` : '—'}</div>
+            <div className="stat-label">Food cost</div>
+          </div>
+          <div className="stat">
+            <div className="stat-num">{wasteKg.toFixed(1)} kg</div>
+            <div className="stat-label">{closed ? 'Waste, spoiled perishables' : 'Waste, counted at close'}</div>
+          </div>
+          <div className="stat accent">
+            <div className="stat-num">{money(profit)}</div>
+            <div className="stat-label">Daily profit</div>
+          </div>
+          <div className="stat">
+            <div className="stat-num">{orders.length}</div>
+            <div className="stat-label">Orders served</div>
+          </div>
+        </section>
+
+        <section className="row-2">
+          <div className="card chart-card">
+            <div className="card-head">
+              <h2>Today</h2>
+              <span className="live-dot">● Live</span>
+            </div>
+            {orders.length === 0 ? (
+              <p className="muted">No orders yet. Tap a dish on the POS and the bars move.</p>
+            ) : (
+              <svg viewBox="0 0 560 210" className="chart" role="img" aria-label="Orders per dish today">
+                <line x1="0" y1={chart.base} x2="560" y2={chart.base} className="axis" />
+                {chart.bars.map((b) => (
+                  <g key={b.name}>
+                    <rect x={b.x} y={b.y} width={b.w} height={Math.max(b.h, 2)} rx="7" className="bar" />
+                    <text x={b.x + b.w / 2} y={b.y - 8} textAnchor="middle" className="bar-val">
+                      {b.count}
+                    </text>
+                    <text x={b.x + b.w / 2} y={chart.base + 20} textAnchor="middle" className="bar-label">
+                      {b.name}
+                    </text>
+                  </g>
+                ))}
+                {revenue > 0 && (
+                  <polyline points={chart.line} className="rev-line" />
+                )}
+              </svg>
+            )}
+            <p className="muted">Bars: orders per dish. Red line: cumulative revenue, {money(revenue)} so far.</p>
+          </div>
+
+          <div className="card side-card">
+            {!closed ? (
+              <>
+                <h2>Stock alerts</h2>
+                {lowStock.length === 0 ? (
+                  <p className="muted">Nothing low. Salmon covers 3 orders — sell 3 Miso Salmons and watch it 86.</p>
+                ) : (
+                  <ul className="alert-list">
+                    {lowStock.map((ing) => {
+                      const qty = current[ing.id] ?? 0;
+                      return (
+                        <li key={ing.id} className={qty <= 0 ? 'alert out' : 'alert low'}>
+                          <strong>{ing.name}</strong>
+                          <span>
+                            {qty <= 0 ? 'OUT' : `${fmtQty(qty)} ${ing.unit} left`}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <button className="red-btn block" onClick={() => setClosed(true)}>
+                  End Sales — close the day
                 </button>
+              </>
+            ) : (
+              <>
+                <h2>Tomorrow&apos;s order</h2>
+                {grocery.length === 0 ? (
+                  <p className="muted">Nothing to order — stock covers tomorrow.</p>
+                ) : (
+                  <>
+                    {(
+                      [
+                        ['Daily', 'daily'],
+                        ['Bulk', 'bulk'],
+                        ['Weekly', 'weekly'],
+                      ] as [string, Section][]
+                    ).map(([label, section]) => {
+                      const lines = groceryBySection(section);
+                      if (lines.length === 0) return null;
+                      const subtotal = lines.reduce((s, l) => s + l.total, 0);
+                      return (
+                        <div key={section} className="groc-sum">
+                          <span>{label} · {lines.length} items</span>
+                          <strong>{money(subtotal)}</strong>
+                        </div>
+                      );
+                    })}
+                    <div className="groc-total">
+                      <span>Estimated total</span>
+                      <strong>{money(groceryTotal)}</strong>
+                    </div>
+                  </>
+                )}
+                <button
+                  className="red-btn block"
+                  onClick={() => setBought(true)}
+                  disabled={bought || grocery.length === 0}
+                >
+                  {bought ? 'Order confirmed' : 'BUY — approve this order'}
+                </button>
+                {bought && (
+                  <p className="confirm">
+                    Order confirmed — human approval recorded. Nothing was actually purchased. The agent never buys on its own.
+                  </p>
+                )}
+                <button
+                  className="ghost-btn block"
+                  onClick={() => {
+                    setClosed(false);
+                    setBought(false);
+                  }}
+                >
+                  Back to service
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="row-2">
+          <div className="card">
+            <h2>POS</h2>
+            <div className="pos-grid">
+              {visibleDishes.map((dish) => {
+                const out = is86(dish);
+                return (
+                  <button
+                    key={dish.id}
+                    className={out ? 'pos-btn off' : 'pos-btn'}
+                    disabled={out || closed}
+                    onClick={() => placeOrder(dish)}
+                  >
+                    <span className="pos-name">{dish.name}</span>
+                    <span className="pos-price">{money(dish.price)}</span>
+                    <span className="pos-recipe">
+                      {out ? '86’d — unavailable' : recipeText(dish)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {visibleDishes.length === 0 && (
+              <p className="muted">No dishes match “{query}”.</p>
+            )}
+            {closed && (
+              <p className="muted">Service is closed for the day — see the overnight list below.</p>
+            )}
+          </div>
+
+          <div className="card">
+            <h2>Menu</h2>
+            {visibleDishes.map((dish) => {
+              const out = is86(dish);
+              const manual = manual86.has(dish.id);
+              const stockOut = !canMake(dish);
+              return (
+                <div key={dish.id} className="menu-row">
+                  <div className={out ? 'crossed' : undefined}>
+                    <strong>{dish.name}</strong> — {money(dish.price)}
+                    <div className="pos-recipe">{recipeText(dish)}</div>
+                  </div>
+                  <div className="menu-actions">
+                    {out && (
+                      <span className="tag-red">
+                        {stockOut ? '86’d — out of stock' : '86’d'}
+                      </span>
+                    )}
+                    {manual ? (
+                      <button
+                        className="mini-btn"
+                        onClick={() => toggle86(dish.id)}
+                        disabled={stockOut}
+                      >
+                        Un-86
+                      </button>
+                    ) : (
+                      <button className="mini-btn danger" onClick={() => toggle86(dish.id)}>
+                        86 it
+                      </button>
+                    )}
+                  </div>
+                </div>
               );
             })}
           </div>
-          {closed && (
-            <p style={s.note}>Service is closed for the day — see the overnight list below.</p>
-          )}
-        </div>
+        </section>
 
-        {/* Menu board */}
-        <div style={s.panel}>
-          <h2 style={s.panelTitle}>Menu board</h2>
-          {DISHES.map((dish) => {
-            const out = is86(dish);
-            const manual = manual86.has(dish.id);
-            const stockOut = !canMake(dish);
-            return (
-              <div key={dish.id} style={s.menuRow}>
-                <div style={out ? s.crossed : undefined}>
-                  <strong>{dish.name}</strong> — {money(dish.price)}
-                  <div style={s.dishRecipe}>{recipeText(dish)}</div>
-                </div>
-                <div>
-                  {out && (
-                    <span style={s.tagRed}>
-                      {stockOut ? '86’d — out of stock' : '86’d'}
-                    </span>
-                  )}{' '}
-                  {manual ? (
-                    <button
-                      style={s.smallButton}
-                      onClick={() => toggle86(dish.id)}
-                      disabled={stockOut}
-                      title={stockOut ? 'Stock is too low to bring it back' : 'Bring it back'}
-                    >
-                      Un-86
-                    </button>
-                  ) : (
-                    <button style={s.smallButtonDanger} onClick={() => toggle86(dish.id)}>
-                      86 it
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          <p style={s.note}>
-            A dish auto-86s when any recipe ingredient runs out. Salmon only
-            covers 3 orders — sell 3 Miso Salmons and watch it 86 live.
-          </p>
-        </div>
-      </div>
-
-      <div style={s.grid2}>
-        {/* Inventory */}
-        <div style={s.panel}>
-          <h2 style={s.panelTitle}>Inventory</h2>
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Ingredient</th>
-                <th style={s.th}>Stock</th>
-                <th style={s.th}>Cost</th>
-                <th style={s.th}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {INGREDIENTS.map((ing) => {
-                const qty = current[ing.id] ?? 0;
-                const low = qty > 0 && qty <= ing.startQty * 0.25;
-                return (
-                  <tr key={ing.id}>
-                    <td style={s.td}>{ing.name}</td>
-                    <td style={s.td}>
-                      {fmtQty(qty)} {ing.unit}
-                    </td>
-                    <td style={s.td}>{money(ing.unitCost)}/{ing.unit}</td>
-                    <td style={s.td}>
-                      {qty <= 0 ? (
-                        <span style={s.tagRed}>OUT</span>
-                      ) : low ? (
-                        <span style={s.tagAmber}>LOW</span>
-                      ) : (
-                        <span style={s.tagGreen}>OK</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Receipt log */}
-        <div style={s.panel}>
-          <h2 style={s.panelTitle}>Receipt log</h2>
-          {recentReceipts.length === 0 ? (
-            <p style={s.note}>No orders yet. Tap a dish on the POS to start service.</p>
-          ) : (
-            <table style={s.table}>
+        <section className="row-2">
+          <div className="card">
+            <h2>Inventory</h2>
+            <table className="tbl">
               <thead>
                 <tr>
-                  <th style={s.th}>#</th>
-                  <th style={s.th}>Dish</th>
-                  <th style={s.th}>Price</th>
-                  <th style={s.th}>Time</th>
+                  <th>Ingredient</th>
+                  <th>Stock</th>
+                  <th>Cost</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {recentReceipts.map((r) => (
-                  <tr key={r.orderNo}>
-                    <td style={s.td}>{r.orderNo}</td>
-                    <td style={s.td}>{r.dish}</td>
-                    <td style={s.td}>{money(r.price)}</td>
-                    <td style={s.td}>{r.time}</td>
-                  </tr>
-                ))}
+                {INGREDIENTS.map((ing) => {
+                  const qty = current[ing.id] ?? 0;
+                  const low = qty > 0 && qty <= ing.startQty * 0.25;
+                  return (
+                    <tr key={ing.id}>
+                      <td>{ing.name}</td>
+                      <td>
+                        {fmtQty(qty)} {ing.unit}
+                      </td>
+                      <td>
+                        {money(ing.unitCost)}/{ing.unit}
+                      </td>
+                      <td>
+                        {qty <= 0 ? (
+                          <span className="tag-red">OUT</span>
+                        ) : low ? (
+                          <span className="tag-amber">LOW</span>
+                        ) : (
+                          <span className="tag-green">OK</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          )}
-        </div>
-      </div>
-
-      {/* End Sales / close view */}
-      {!closed ? (
-        <button style={s.bigButton} onClick={() => setClosed(true)}>
-          End Sales — close the day &amp; build tomorrow&apos;s grocery list
-        </button>
-      ) : (
-        <div style={s.panel}>
-          <h2 style={s.panelTitle}>Overnight — close of day</h2>
-
-          <div style={s.scoreRow}>
-            <div style={s.scoreCard}>
-              <div style={s.scoreLabel}>Day&apos;s profit</div>
-              <div style={s.scoreValue}>{money(profit)}</div>
-            </div>
-            <div style={s.scoreCard}>
-              <div style={s.scoreLabel}>Food cost %</div>
-              <div style={s.scoreValue}>
-                {revenue > 0 ? `${foodCostPct.toFixed(1)}%` : '—'}
-              </div>
-            </div>
-            <div style={s.scoreCard}>
-              <div style={s.scoreLabel}>Waste (spoiled perishables)</div>
-              <div style={s.scoreValue}>{wasteKg.toFixed(1)} kg</div>
-            </div>
-            <div style={s.scoreCard}>
-              <div style={s.scoreLabel}>Most-used ingredient</div>
-              <div style={s.scoreValue}>
-                {mostUsed
-                  ? `${mostUsed.ing.name} ${fmtQty(mostUsed.qty)} ${mostUsed.ing.unit}`
-                  : '—'}
-              </div>
-            </div>
-            <div style={s.scoreCard}>
-              <div style={s.scoreLabel}>Expensive, barely used</div>
-              <div style={s.scoreValue}>
-                {priceyBarelyUsed
-                  ? `${priceyBarelyUsed.ing.name} (${money(priceyBarelyUsed.ing.unitCost)}/${priceyBarelyUsed.ing.unit})`
-                  : '—'}
-              </div>
-              {priceyBarelyUsed && (
-                <div style={s.note}>
-                  used only {fmtQty(priceyBarelyUsed.qty)} {priceyBarelyUsed.ing.unit} today
-                </div>
-              )}
-            </div>
           </div>
 
-          <h3 style={s.sectionTitle}>Ingredients used today</h3>
-          {usedIngredients.length === 0 ? (
-            <p style={s.note}>Nothing sold today.</p>
-          ) : (
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  <th style={s.th}>Ingredient</th>
-                  <th style={s.th}>Used</th>
-                  <th style={s.th}>Left</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usedIngredients.map((ing) => (
-                  <tr key={ing.id}>
-                    <td style={s.td}>{ing.name}</td>
-                    <td style={s.td}>
-                      {fmtQty(used[ing.id] ?? 0)} {ing.unit}
-                    </td>
-                    <td style={s.td}>
-                      {fmtQty(current[ing.id] ?? 0)} {ing.unit}
-                    </td>
+          <div className="card">
+            <h2>Receipts</h2>
+            {recentReceipts.length === 0 ? (
+              <p className="muted">No orders yet. Tap a dish on the POS to start service.</p>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Dish</th>
+                    <th>Price</th>
+                    <th>Time</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                </thead>
+                <tbody>
+                  {recentReceipts.map((r) => (
+                    <tr key={r.orderNo}>
+                      <td>{r.orderNo}</td>
+                      <td>{r.dish}</td>
+                      <td>{money(r.price)}</td>
+                      <td>{r.time}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
 
-          <h3 style={s.sectionTitle}>Tomorrow&apos;s grocery list</h3>
-          {grocery.length === 0 ? (
-            <p style={s.note}>Nothing to order — stock covers tomorrow.</p>
-          ) : (
-            <>
-              {(
-                [
-                  ['Daily perishables — fish, milk, eggs', 'daily'],
-                  ['Bulk — 3–4 days (rice, oil, flour)', 'bulk'],
-                  ['Weekly — spices, dry goods', 'weekly'],
-                ] as [string, Section][]
-              ).map(([title, section]) => {
-                const lines = groceryBySection(section);
-                if (lines.length === 0) return null;
-                return (
-                  <div key={section}>
-                    <h4 style={s.sectionTitle}>{title}</h4>
-                    <table style={s.table}>
-                      <thead>
-                        <tr>
-                          <th style={s.th}>Item</th>
-                          <th style={s.th}>Qty</th>
-                          <th style={s.th}>Supplier</th>
-                          <th style={s.th}>Price</th>
-                          <th style={s.th}>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((line) => (
-                          <tr key={line.ingId}>
-                            <td style={s.td}>{line.name}</td>
-                            <td style={s.td}>
-                              {fmtQty(line.qty)} {line.unit}
-                            </td>
-                            <td style={s.td}>
-                              {line.supplier}{' '}
-                              <span style={s.tag}>{line.source}</span>
-                            </td>
-                            <td style={s.td}>{money(line.price)}/{line.unit}</td>
-                            <td style={s.td}>{money(line.total)}</td>
+        {closed && (
+          <section className="card overnight">
+            <h2>Overnight — close of day</h2>
+            <div className="stats compact">
+              <div className="stat">
+                <div className="stat-num">{money(profit)}</div>
+                <div className="stat-label">Day&apos;s profit</div>
+              </div>
+              <div className="stat">
+                <div className="stat-num">{revenue > 0 ? `${foodCostPct.toFixed(1)}%` : '—'}</div>
+                <div className="stat-label">Food cost</div>
+              </div>
+              <div className="stat">
+                <div className="stat-num">{wasteKg.toFixed(1)} kg</div>
+                <div className="stat-label">Waste, spoiled perishables</div>
+              </div>
+              <div className="stat">
+                <div className="stat-num">
+                  {mostUsed ? `${mostUsed.ing.name} ${fmtQty(mostUsed.qty)} ${mostUsed.ing.unit}` : '—'}
+                </div>
+                <div className="stat-label">Most-used ingredient</div>
+              </div>
+              <div className="stat">
+                <div className="stat-num">
+                  {priceyBarelyUsed
+                    ? `${priceyBarelyUsed.ing.name} (${money(priceyBarelyUsed.ing.unitCost)}/${priceyBarelyUsed.ing.unit})`
+                    : '—'}
+                </div>
+                <div className="stat-label">Expensive, barely used</div>
+              </div>
+            </div>
+
+            <h3>Ingredients used today</h3>
+            {usedIngredients.length === 0 ? (
+              <p className="muted">Nothing sold today.</p>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Ingredient</th>
+                    <th>Used</th>
+                    <th>Left</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usedIngredients.map((ing) => (
+                    <tr key={ing.id}>
+                      <td>{ing.name}</td>
+                      <td>
+                        {fmtQty(used[ing.id] ?? 0)} {ing.unit}
+                      </td>
+                      <td>
+                        {fmtQty(current[ing.id] ?? 0)} {ing.unit}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <h3>Tomorrow&apos;s grocery list</h3>
+            {grocery.length === 0 ? (
+              <p className="muted">Nothing to order — stock covers tomorrow.</p>
+            ) : (
+              <>
+                {(
+                  [
+                    ['Daily perishables — fish, milk, eggs', 'daily'],
+                    ['Bulk — 3–4 days (rice, oil, flour)', 'bulk'],
+                    ['Weekly — spices, dry goods', 'weekly'],
+                  ] as [string, Section][]
+                ).map(([title, section]) => {
+                  const lines = groceryBySection(section);
+                  if (lines.length === 0) return null;
+                  return (
+                    <div key={section}>
+                      <h4>{title}</h4>
+                      <table className="tbl">
+                        <thead>
+                          <tr>
+                            <th>Item</th>
+                            <th>Qty</th>
+                            <th>Supplier</th>
+                            <th>Price</th>
+                            <th>Total</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
-              <p style={{ marginTop: 12, fontSize: 16 }}>
-                <strong>Estimated total: {money(groceryTotal)}</strong>
-              </p>
-            </>
-          )}
+                        </thead>
+                        <tbody>
+                          {lines.map((line) => (
+                            <tr key={line.ingId}>
+                              <td>{line.name}</td>
+                              <td>
+                                {fmtQty(line.qty)} {line.unit}
+                              </td>
+                              <td>
+                                {line.supplier}{' '}
+                                <span className="tag">{line.source}</span>
+                              </td>
+                              <td>
+                                {money(line.price)}/{line.unit}
+                              </td>
+                              <td>{money(line.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+                <p className="groc-total-line">
+                  <strong>Estimated total: {money(groceryTotal)}</strong>
+                </p>
+              </>
+            )}
+          </section>
+        )}
 
-          <div style={{ marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button
-              style={s.buyButton}
-              onClick={() => setBought(true)}
-              disabled={bought || grocery.length === 0}
-            >
-              {bought ? 'Order confirmed' : 'BUY — approve this order'}
-            </button>
-            <button
-              style={s.ghostButton}
-              onClick={() => {
-                setClosed(false);
-                setBought(false);
-              }}
-            >
-              Back to service
+        <section className="card alter-card">
+          <div className="alter-id">
+            <div className="alter-mark">A</div>
+            <div>
+              <strong>Kitchen Manager · Alter</strong>
+              <p className="muted">
+                Agent identity, scoped access to the ledger. Scopes:{' '}
+                <span className="tag">ledger:read</span>{' '}
+                <span className="tag">orders:write</span>
+              </p>
+              <p className="muted">No money movement. Every access audited.</p>
+            </div>
+          </div>
+          <div className="alter-live">
+            {ledger.status === 'loading' && <p className="muted">Checking the ledger…</p>}
+            {ledger.status === 'idle' && <p className="muted">Ledger check starting…</p>}
+            {ledger.status === 'offline' && (
+              <p className="muted">
+                Ledger API offline — start it with <code>node ledger-api.js</code>
+              </p>
+            )}
+            {ledger.status === 'live' && (
+              <>
+                <p className="alter-ok">● Ledger live — {ledger.orderCount} order(s) on the books</p>
+                <ul className="alter-inv">
+                  {ledger.inventory.slice(0, 3).map((item) => (
+                    <li key={item.item}>
+                      {item.item}: {item.onHand} {item.unit}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <button className="ghost-btn" onClick={fetchLedger}>
+              Recheck ledger
             </button>
           </div>
-          {bought && (
-            <div style={s.confirmBox}>
-              Order confirmed — human approval recorded. Nothing was actually
-              purchased. The agent never buys on its own.
-            </div>
-          )}
-        </div>
-      )}
+        </section>
+      </main>
     </div>
   );
 }
