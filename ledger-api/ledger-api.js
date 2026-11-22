@@ -201,6 +201,16 @@ async function requireScope(req, res, scope) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
+  // CORS preflight: browsers send this before any request with an Authorization header.
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    });
+    res.end();
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/auth/demo-login") {
     if (OIDC_ISSUER) {
       send(res, 400, {
